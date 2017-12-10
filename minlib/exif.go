@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -81,7 +82,6 @@ func movOriginalTime(p string) (originalTime time.Time, err error) {
 		timestamp := int64(binary.BigEndian.Uint32(dword))
 		timestamp -= int64(EPOCH_ADJUSTER)
 		if timestamp <= 0 {
-			// fmt.Printf("guessTimeFromFilename: %s\n", p)
 			return guessTimeFromFilename(p)
 		}
 		originalTime = time.Unix(timestamp, 0)
@@ -96,7 +96,10 @@ func movOriginalTime(p string) (originalTime time.Time, err error) {
 }
 
 func guessTimeFromFilename(p string) (time.Time, error) {
+	// fmt.Printf("guessTimeFromFilename: %s\n", p)
 	name := path.Base(p)
+
+	// Try parse time
 	var digits bytes.Buffer
 	for _, c := range name {
 		if c >= '0' && c <= '9' && digits.Len() < 14 {
@@ -109,7 +112,20 @@ func guessTimeFromFilename(p string) (time.Time, error) {
 	}
 
 	s := digits.String()
-	s += " +0800"
 	layout := "20060102150405 -0700"
-	return time.Parse(layout, s)
+	if t, err := time.Parse(layout, s+" +0800"); err == nil {
+		return t, err
+	}
+
+	// Try timestamp
+	timestamp, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		return time.Time{}, &ErrNoOriginalTime{}
+	}
+	originalTime := time.Unix(int64(timestamp/1000.0), int64(timestamp%1000*1000*1000))
+	if originalTime.Year() >= 1980 && originalTime.Year() <= 2100 {
+		return originalTime, nil
+	} else {
+		return time.Time{}, &ErrNoOriginalTime{}
+	}
 }
