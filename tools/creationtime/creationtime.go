@@ -1,17 +1,17 @@
 package main
 
 import (
-	"os"
 	"fmt"
 	"github.com/mindeng/go/minlib"
-	"log"
+	"os"
 )
 
 func main() {
 	path := os.Args[1]
 	ctime, err := minlib.FileOriginalTime(path)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Fprintf(os.Stderr, "%s: %s\n", err, path)
+		os.Exit(1)
 	}
-	fmt.Printf("Creation time: %v .\n", ctime)
+	fmt.Printf("%v %v\n", ctime, path)
 }

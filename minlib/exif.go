@@ -1,27 +1,40 @@
 package minlib
 
 import (
-	"time"
-	"path/filepath"
-	"strings"
-	"os"
 	"bytes"
 	"encoding/binary"
-	"errors"
+	"fmt"
+	"os"
+	"path"
+	"path/filepath"
+	"strings"
+	"time"
 )
 
-// FileOriginalTime returns the original time for file p.
-func FileOriginalTime(p string) (originalTime time.Time, err error) {
-	ext := strings.ToLower(filepath.Ext(p))
-	switch (ext) {
-	case ".mov", ".mp4":
-		originalTime, err = movOriginalTime(p)
-		return
-	}
-	return 
+type ErrNoOriginalTime struct {
+	s string
 }
 
-func movOriginalTime(p string) (originalTime time.Time, err error)  {
+func (err *ErrNoOriginalTime) Error() string {
+	if len(err.s) != 0 {
+		return fmt.Sprintf("original time not found: %s", err.s)
+	} else {
+		return fmt.Sprint("original time not found")
+	}
+}
+
+// FileOriginalTime returns the original time for file p.
+func FileOriginalTime(p string) (time.Time, error) {
+	ext := strings.ToLower(filepath.Ext(p))
+	switch ext {
+	case ".mov", ".mp4":
+		return movOriginalTime(p)
+	default:
+		return guessTimeFromFilename(p)
+	}
+}
+
+func movOriginalTime(p string) (originalTime time.Time, err error) {
 	ATOM_HEADER_SIZE := 8
 	// difference between Unix epoch and QuickTime epoch, in seconds
 	EPOCH_ADJUSTER := 2082844800
@@ -45,7 +58,7 @@ func movOriginalTime(p string) (originalTime time.Time, err error)  {
 			break
 		} else {
 			atomSize := int64(binary.BigEndian.Uint32(atomHeader[0:4]))
-			in.Seek(atomSize - 8, 1)
+			in.Seek(atomSize-8, 1)
 		}
 	}
 
@@ -55,10 +68,10 @@ func movOriginalTime(p string) (originalTime time.Time, err error)  {
 		return
 	}
 	if bytes.Compare(atomHeader[4:8], []byte("cmov")) == 0 {
-		err = errors.New("moov atom is compressed")
+		err = &ErrNoOriginalTime{"moov atom is compressed"}
 		return
 	} else if bytes.Compare(atomHeader[4:8], []byte("mvhd")) != 0 {
-		err = errors.New("expected to find 'mvhd' header")
+		err = &ErrNoOriginalTime{"expected to find 'mvhd' header"}
 		return
 	} else {
 		in.Seek(4, 1)
@@ -67,8 +80,12 @@ func movOriginalTime(p string) (originalTime time.Time, err error)  {
 		}
 		timestamp := int64(binary.BigEndian.Uint32(dword))
 		timestamp -= int64(EPOCH_ADJUSTER)
+		if timestamp <= 0 {
+			// fmt.Printf("guessTimeFromFilename: %s\n", p)
+			return guessTimeFromFilename(p)
+		}
 		originalTime = time.Unix(timestamp, 0)
-		
+
 		// if _, err = in.Read(dword); err != nil {
 		// 	return nil, err
 		// }
@@ -76,4 +93,23 @@ func movOriginalTime(p string) (originalTime time.Time, err error)  {
 
 		return
 	}
+}
+
+func guessTimeFromFilename(p string) (time.Time, error) {
+	name := path.Base(p)
+	var digits bytes.Buffer
+	for _, c := range name {
+		if c >= '0' && c <= '9' && digits.Len() < 14 {
+			digits.WriteRune(c)
+		}
+	}
+
+	if digits.Len() < 8 {
+		return time.Time{}, &ErrNoOriginalTime{}
+	}
+
+	s := digits.String()
+	s += " +0800"
+	layout := "20060102150405 -0700"
+	return time.Parse(layout, s)
 }
