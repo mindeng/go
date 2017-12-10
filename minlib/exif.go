@@ -14,7 +14,7 @@ import (
 func FileOriginalTime(p string) (originalTime time.Time, err error) {
 	ext := strings.ToLower(filepath.Ext(p))
 	switch (ext) {
-	case ".mov":
+	case ".mov", ".mp4":
 		originalTime, err = movOriginalTime(p)
 		return
 	}
@@ -50,10 +50,14 @@ func movOriginalTime(p string) (originalTime time.Time, err error)  {
 	}
 
 	// found 'moov', look for 'mvhd' and timestamps
+	_, err = in.Read(atomHeader)
+	if err != nil {
+		return
+	}
 	if bytes.Compare(atomHeader[4:8], []byte("cmov")) == 0 {
 		err = errors.New("moov atom is compressed")
 		return
-	} else if bytes.Compare(atomHeader[4:8], []byte("mvhd")) == 0 {
+	} else if bytes.Compare(atomHeader[4:8], []byte("mvhd")) != 0 {
 		err = errors.New("expected to find 'mvhd' header")
 		return
 	} else {
@@ -61,7 +65,7 @@ func movOriginalTime(p string) (originalTime time.Time, err error)  {
 		if _, err = in.Read(dword); err != nil {
 			return
 		}
-		timestamp := int64(binary.BigEndian.Uint32(dword[0:4]))
+		timestamp := int64(binary.BigEndian.Uint32(dword))
 		timestamp -= int64(EPOCH_ADJUSTER)
 		originalTime = time.Unix(timestamp, 0)
 		
