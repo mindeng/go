@@ -1,3 +1,5 @@
+// +build !exif
+
 package minlib
 
 import (
