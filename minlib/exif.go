@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"github.com/rwcarlsen/goexif/exif"
 	"os"
 	"path"
 	"path/filepath"
@@ -30,7 +31,26 @@ func FileOriginalTime(p string) (time.Time, error) {
 	switch ext {
 	case ".mov", ".mp4":
 		return movOriginalTime(p)
+	case ".jpg", ".arw", ".nef":
+		return imageOriginalTime(p)
 	default:
+		return guessTimeFromFilename(p)
+	}
+}
+
+func imageOriginalTime(p string) (time.Time, error) {
+	f, err := os.Open(p)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	x, err := exif.Decode(f)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if t, err := x.DateTime(); err == nil {
+		return t, err
+	} else {
 		return guessTimeFromFilename(p)
 	}
 }
