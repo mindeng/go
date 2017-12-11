@@ -46,7 +46,7 @@ func imageOriginalTime(p string) (time.Time, error) {
 
 	x, err := exif.Decode(f)
 	if err != nil {
-		return time.Time{}, err
+		return guessTimeFromFilename(p)
 	}
 	if t, err := x.DateTime(); err == nil {
 		return t, err
@@ -130,14 +130,40 @@ func guessTimeFromFilename(p string) (time.Time, error) {
 	if digits.Len() < 8 {
 		return time.Time{}, &ErrNoOriginalTime{}
 	}
-
 	s := digits.String()
+
 	layout := "20060102150405 -0700"
 	if t, err := time.Parse(layout, s+" +0800"); err == nil {
 		return t, err
 	}
 
+	// Try parse date
+	layout = "20060102 -0700"
+	if t, err := time.Parse(layout, s[:8] + " +0800"); err == nil {
+		return t, err
+	}
+
 	// Try timestamp
+	digits.Reset()
+	// Read a continuous of digits
+	started := false
+	for _, c := range name {
+		if c >= '0' && c <= '9' && digits.Len() < 14 {
+			started = true
+			digits.WriteRune(c)
+		} else {
+			if started {
+				break
+			}
+		}
+	}
+
+	// timestamp of 1980.1.1 is 315504000000.0 ms
+	if digits.Len() < 12 {
+		return time.Time{}, &ErrNoOriginalTime{}
+	}
+	s = digits.String()
+
 	timestamp, err := strconv.ParseUint(s, 10, 64)
 	if err != nil {
 		return time.Time{}, &ErrNoOriginalTime{}
