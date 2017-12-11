@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"github.com/rwcarlsen/goexif/exif"
+	"github.com/mindeng/goexif/exif"
 	"os"
 	"path"
 	"path/filepath"
@@ -132,14 +132,14 @@ func guessTimeFromFilename(p string) (time.Time, error) {
 	}
 	s := digits.String()
 
-	layout := "20060102150405 -0700"
-	if t, err := time.Parse(layout, s+" +0800"); err == nil {
+	layout := "20060102150405"
+	if t, err := time.ParseInLocation(layout, s, time.Local); err == nil {
 		return t, err
 	}
 
 	// Try parse date
-	layout = "20060102 -0700"
-	if t, err := time.Parse(layout, s[:8] + " +0800"); err == nil {
+	layout = "20060102"
+	if t, err := time.ParseInLocation(layout, s[:8], time.Local); err == nil {
 		return t, err
 	}
 
