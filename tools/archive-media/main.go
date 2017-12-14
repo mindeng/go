@@ -1,23 +1,24 @@
 package main
 
 import (
-	"strings"
 	"fmt"
-	"github.com/mindeng/go/minlib"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/mindeng/go/minlib"
 )
 
 type ArchiveCallback func(path string, err error) error
 
 type ArchiveFunc func(path string, created time.Time, info os.FileInfo) error
 
-type ErrArchiveIgnore struct{
+type ErrArchiveIgnore struct {
 	info string
 }
 
-func (err ErrArchiveIgnore) Error() (string) {
+func (err ErrArchiveIgnore) Error() string {
 	return err.info
 }
 
