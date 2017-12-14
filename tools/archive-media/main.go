@@ -58,7 +58,11 @@ func ArchiveDirectory(src string, archiveFunc ArchiveFunc, cb ArchiveCallback) e
 
 func main() {
 	ArchiveDirectory(os.Args[1], func(path string, created time.Time, info os.FileInfo) error {
-		fmt.Printf("archive %v %s\n", created, path)
+		if created.Year() < 1980 {
+			fmt.Fprintf(os.Stderr, "time error: %v %s\n", created, path)
+		} else {
+			fmt.Printf("archive %v %s\n", created, path)
+		}
 		return nil
 	}, func(path string, err error) error {
 		if err != nil {
