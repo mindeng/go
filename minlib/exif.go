@@ -188,6 +188,8 @@ func guessTimeFromFilename(p string) (time.Time, error) {
 	}
 }
 
+// ExtractExifDateTime extract Exif date time from the reader r
+// `exiftool -htmlDump /path/to/file` is very usefull
 func ExtractExifDateTime(r io.Reader) (time.Time, error) {
 	head := make([]byte, 2)
 	n, err := r.Read(head)
