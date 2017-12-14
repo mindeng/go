@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"fmt"	
+	"fmt"
 	"io"
 	"os"
 	"path"
@@ -223,14 +223,12 @@ func handleJPG(r io.Reader) (time.Time, error) {
 			return zeroTime, errors.New("invalid image file: header too short")
 		}
 
-
-
 		// Extract app1 size
 		var size uint16
 		err = binary.Read(r, binary.BigEndian, &size)
 		if err != nil {
 			return zeroTime, err
-		}			
+		}
 
 		switch string(marker) {
 		case "\xFF\xE1":
@@ -258,7 +256,7 @@ func handleJPG(r io.Reader) (time.Time, error) {
 		default:
 			// skip this APP data
 			s := r.(io.Seeker)
-			s.Seek(int64(size)-2, os.SEEK_CUR)			
+			s.Seek(int64(size)-2, os.SEEK_CUR)
 		}
 	}
 }
