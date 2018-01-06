@@ -182,6 +182,7 @@ func archive(src string, dst string) {
 		var errorTimeFiles []string
 		var existedFiles []string
 		var archiveFailed []string
+		copiedNum := 0
 		for result := range results {
 			if result.err != nil {
 				fmt.Fprintf(os.Stderr, "archive failed: %v %s\n", result.err, result.src)
@@ -189,6 +190,7 @@ func archive(src string, dst string) {
 			} else {
 				switch result.result {
 				case Archived:
+					copiedNum += 1
 					fmt.Printf("%s -> %s\n", result.src, result.dst)
 				case IgnoreErrorTime:
 					errorTimeFiles = append(errorTimeFiles, result.src)
@@ -214,6 +216,8 @@ func archive(src string, dst string) {
 		for _, path := range existedFiles {
 			fmt.Fprintf(os.Stderr, "%s\n", path)
 		}
+
+		fmt.Fprintf(os.Stderr, "Files copied: %d\n", copiedNum)
 
 	}()
 
