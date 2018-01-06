@@ -14,6 +14,13 @@ import (
 	"time"
 )
 
+// exiftool -a -G1 -time:all FILE
+// exiftool -htmlDump FILE
+// hexdump -C FILE
+
+// AVI RIFF File Reference: https://msdn.microsoft.com/en-us/library/ms779636.aspx
+// Nikon Tags: https://www.sno.phy.queensu.ca/~phil/exiftool/TagNames/Nikon.html#AVITags
+
 type ErrNoOriginalTime struct {
 	s string
 }
@@ -45,6 +52,9 @@ func FileOriginalTime(p string) (time.Time, error) {
 			return guessTimeFromFilename(p)
 		}
 		return t, nil
+	case ".avi":
+		// Currently only support *.avi created by Nikon
+		return aviOriginalTime(p)
 	default:
 		return guessTimeFromFilename(p)
 	}
@@ -124,6 +134,110 @@ func movOriginalTime(p string) (originalTime time.Time, err error) {
 		// modificationDate := time.Unix(int64(binary.BigEndian.Uint32(dword[0:4])), 0)
 
 		return
+	}
+}
+
+func aviOriginalTime(p string) (originalTime time.Time, err error) {
+	// open file and search for moov item
+	in, err := os.Open(p)
+	if err != nil {
+		return
+	}
+	defer in.Close()
+
+	dword := make([]byte, 4)
+	if _, err = in.Read(dword); err != nil {
+		return
+	}
+
+	if bytes.Compare(dword, []byte("RIFF")) != 0 {
+		err = &ErrNoOriginalTime{"Invalid AVI file: No RIFF"}
+		return
+	}
+	if _, err = in.Read(dword); err != nil {
+		return
+	}
+	if _, err = in.Read(dword); err != nil {
+		return
+	}
+	if bytes.Compare(dword[:3], []byte("AVI")) != 0 {
+		err = &ErrNoOriginalTime{"Invalid AVI file: No AVI"}
+		return
+	}
+	return handleRIFFList(in)
+}
+
+func handleRIFFList(in io.ReadSeeker) (originalTime time.Time, err error) {
+	dword := make([]byte, 4)
+	for {
+		if _, err = in.Read(dword); err != nil {
+			return
+		}
+		if bytes.Compare(dword, []byte("LIST")) != 0 {
+			err = &ErrNoOriginalTime{"Invalid AVI file: No LIST"}
+			return
+		}
+
+		if _, err = in.Read(dword); err != nil {
+			return
+		}
+		listSize := int64(binary.LittleEndian.Uint32(dword))
+		if _, err = in.Read(dword); err != nil {
+			return
+		}
+		listType := string(dword)
+
+		if listType == "ncdt" {
+			fmt.Println("found it!")
+			return handleRIFFChunk(in)
+		}
+		fmt.Println(listType, listSize)
+		in.Seek(listSize-4, os.SEEK_CUR)
+	}
+}
+
+func handleRIFFChunk(in io.ReadSeeker) (originalTime time.Time, err error) {
+	dword := make([]byte, 4)
+	for {
+		if _, err = in.Read(dword); err != nil {
+			return
+		}
+		ckID := string(dword)
+		if _, err = in.Read(dword); err != nil {
+			return
+		}
+		ckSize := binary.LittleEndian.Uint32(dword)
+		if ckID != "nctg" {
+			in.Seek(int64(ckSize), os.SEEK_CUR)
+			continue
+		}
+
+		// process nctg data
+		return handleRIFFChunkTags(in)
+	}
+}
+
+func handleRIFFChunkTags(in io.ReadSeeker) (originalTime time.Time, err error) {
+	word := make([]byte, 2)
+	for {
+		if _, err = in.Read(word); err != nil {
+			return
+		}
+		tagID := binary.LittleEndian.Uint16(word)
+		if _, err = in.Read(word); err != nil {
+			return
+		}
+		tagSize := binary.LittleEndian.Uint16(word)
+		if tagID != 0x0013 {
+			in.Seek(int64(tagSize), os.SEEK_CUR)
+			continue
+		}
+
+		tagData := make([]byte, tagSize)
+		if _, err = in.Read(tagData); err != nil {
+			return
+		}
+		return parseTime(string(tagData))
 	}
 }
 
