@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -28,6 +29,7 @@ type ArchiveResultType int
 
 const (
 	Archived ArchiveResultType = iota
+	CopyFailed
 	IgoreExisted
 	IgnoreErrorTime
 )
@@ -45,6 +47,28 @@ type MediaInfo struct {
 }
 
 func archiveFiles(mediaFiles <-chan MediaInfo, dstDir string, results chan<- ArchiveResult) {
+	done := make(chan bool, concurrentNum)
+	tasks := make(chan struct {
+		src string
+		dst string
+	}, 100)
+
+	copy := func() {
+		for t := range tasks {
+			err := minlib.CopyFile(t.dst, t.src)
+			result := Archived
+			if err != nil {
+				result = CopyFailed
+			}
+			results <- ArchiveResult{t.src, t.dst, result, err}
+		}
+		done <- true
+	}
+
+	for i := 0; i < concurrentNum; i++ {
+		go copy()
+	}
+
 	for mediaFile := range mediaFiles {
 		src := mediaFile.path
 		// log.Println("got ", src)
@@ -59,7 +83,10 @@ func archiveFiles(mediaFiles <-chan MediaInfo, dstDir string, results chan<- Arc
 		dst := path.Join(dstDir, fmt.Sprintf("%02d/%02d/%02d", created.Year(), created.Month(), created.Day()), path.Base(src))
 		dstDir := path.Dir(dst)
 		if _, err := os.Stat(dstDir); os.IsNotExist(err) {
-			os.MkdirAll(dstDir, 0755)
+			if err = os.MkdirAll(dstDir, 0755); err != nil {
+				results <- ArchiveResult{src, dst, CopyFailed, err}
+				break
+			}
 		}
 
 		if info, err := os.Stat(dst); err == nil {
@@ -72,9 +99,19 @@ func archiveFiles(mediaFiles <-chan MediaInfo, dstDir string, results chan<- Arc
 			}
 		}
 
-		err := minlib.CopyFile(dst, mediaFile.path)
-		results <- ArchiveResult{mediaFile.path, dst, Archived, err}
+		// err := minlib.CopyFile(dst, mediaFile.path)
+		// results <- ArchiveResult{mediaFile.path, dst, Archived, err}
+		tasks <- struct {
+			src string
+			dst string
+		}{src, dst}
 	}
+	close(tasks)
+
+	for i := 0; i < concurrentNum; i++ {
+		<-done
+	}
+
 	close(results)
 }
 
@@ -119,9 +156,11 @@ func archive(src string, dst string) {
 	func() {
 		var errorTimeFiles []string
 		var existedFiles []string
+		var archiveFailed []string
 		for result := range results {
 			if result.err != nil {
 				fmt.Fprintf(os.Stderr, "archive failed: %v %s\n", result.err, result.src)
+				archiveFailed = append(archiveFailed, result.src)
 			} else {
 				switch result.result {
 				case Archived:
@@ -136,21 +175,38 @@ func archive(src string, dst string) {
 			}
 		}
 
-		fmt.Fprintf(os.Stderr, "%s", "Files with error time: \n")
+		fmt.Fprintf(os.Stderr, "Files with error time(%d): \n", len(errorTimeFiles))
 		for _, path := range errorTimeFiles {
 			fmt.Fprintf(os.Stderr, "%s\n", path)
 		}
 
-		fmt.Fprintf(os.Stderr, "%s", "Files existed: \n")
+		fmt.Fprintf(os.Stderr, "Files copy failed(%d): \n", len(archiveFailed))
+		for _, path := range archiveFailed {
+			fmt.Fprintf(os.Stderr, "%s\n", path)
+		}
+
+		fmt.Fprintf(os.Stderr, "Files existed(%d): \n", len(existedFiles))
 		for _, path := range existedFiles {
 			fmt.Fprintf(os.Stderr, "%s\n", path)
 		}
+
 	}()
 
 	elapsed := time.Since(start)
 	log.Printf("took %s", elapsed)
 }
 
+var concurrentNum = 1
+
 func main() {
-	archive(os.Args[1], os.Args[2])
+	flag.IntVar(&concurrentNum, "c", 1, "concurrent number")
+	flag.Parse()
+	if flag.NArg() < 2 {
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	fmt.Printf("Concurrent number: %d\n", concurrentNum)
+
+	archive(flag.Args()[0], flag.Args()[1])
 }
