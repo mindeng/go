@@ -121,6 +121,21 @@ func archiveFiles(mediaFiles <-chan MediaInfo, dstDir string, results chan<- Arc
 }
 
 func walkDirectory(dir string, out chan MediaInfo) {
+	done := make(chan bool, concurrentNum)
+	tasks := make(chan string, 100)
+
+	extractTime := func() {
+		for path := range tasks {
+			created, err := minlib.FileOriginalTime(path)
+			out <- MediaInfo{path, created, err}
+		}
+		done <- true
+	}
+
+	for i := 0; i < concurrentNum; i++ {
+		go extractTime()
+	}
+
 	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "walk error: %v %s\n", err, path)
@@ -138,13 +153,18 @@ func walkDirectory(dir string, out chan MediaInfo) {
 		case ".jpg", ".png", ".arw", ".nef", ".avi", ".mp4", ".mov", ".m4v":
 			// need to archive
 			// log.Println("put ", path)
-			created, err := minlib.FileOriginalTime(path)
-			out <- MediaInfo{path, created, err}
+			tasks <- path
 			return nil
 		default:
 			return nil
 		}
 	})
+
+	close(tasks)
+
+	for i := 0; i < concurrentNum; i++ {
+		<-done
+	}
 
 	// log.Println("q closed")
 	close(out)
