@@ -39,7 +39,7 @@ var zeroTime = time.Time{}
 func FileOriginalTime(p string) (time.Time, error) {
 	ext := strings.ToLower(filepath.Ext(p))
 	switch ext {
-	case ".mov", ".mp4":
+	case ".mov", ".mp4", ".m4a":
 		return movOriginalTime(p)
 	case ".jpg", ".arw", ".nef":
 		r, err := os.Open(p)
