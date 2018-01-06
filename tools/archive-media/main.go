@@ -55,7 +55,12 @@ func archiveFiles(mediaFiles <-chan MediaInfo, dstDir string, results chan<- Arc
 
 	copy := func() {
 		for t := range tasks {
-			err := minlib.CopyFile(t.dst, t.src)
+			var err error
+			if moveFlag {
+				err = os.Rename(t.src, t.dst)
+			} else {
+				err = minlib.CopyFile(t.dst, t.src)
+			}
 			result := Archived
 			if err != nil {
 				result = CopyFailed
@@ -197,9 +202,11 @@ func archive(src string, dst string) {
 }
 
 var concurrentNum = 1
+var moveFlag = false
 
 func main() {
 	flag.IntVar(&concurrentNum, "c", 1, "concurrent number")
+	flag.BoolVar(&moveFlag, "move", false, "moving instead of copying")
 	flag.Parse()
 	if flag.NArg() < 2 {
 		flag.Usage()
