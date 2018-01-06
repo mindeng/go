@@ -1,11 +1,11 @@
 package minlib
 
 import (
+	"fmt"
+	"io"
+	"io/ioutil"
 	"os"
 	"path/filepath"
-	"io/ioutil"
-	"io"
-	"fmt"
 	"time"
 )
 
@@ -26,19 +26,20 @@ func CopyFile(dst, src string) error {
 		// src is not existed
 		return err
 	}
-	
+
 	// if _, err := os.Stat(dst); err == nil {
 	// 	// dst is existed
 	// 	return ErrFileExists{path: dst}
 	// }
-	  
+
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
 
-	tmp, err := ioutil.TempFile(filepath.Dir(dst), "")
+	// tmp, err := ioutil.TempFile("", "")
+	tmp, err := ioutil.TempFile(filepath.Dir(dst)+".tmp", "cp_")
 	if err != nil {
 		return err
 	}
