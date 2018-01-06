@@ -150,7 +150,7 @@ func walkDirectory(dir string, out chan MediaInfo) {
 			return nil
 		}
 		switch strings.ToLower(filepath.Ext(info.Name())) {
-		case ".jpg", ".png", ".arw", ".nef", ".avi", ".mp4", ".mov", ".m4v":
+		case ".jpg", ".png", ".arw", ".nef", ".avi", ".mp4", ".mov", ".m4v", ".m4a":
 			// need to archive
 			// log.Println("put ", path)
 			tasks <- path
