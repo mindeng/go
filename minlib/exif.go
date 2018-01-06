@@ -41,7 +41,7 @@ func FileOriginalTime(p string) (time.Time, error) {
 	switch ext {
 	case ".mov", ".mp4", ".m4v", ".m4a":
 		return movOriginalTime(p)
-	case ".jpg", ".arw", ".nef":
+	case ".jpg", ".jpeg", ".arw", ".nef":
 		r, err := os.Open(p)
 		if err != nil {
 			return zeroTime, err
