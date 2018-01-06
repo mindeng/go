@@ -188,10 +188,10 @@ func handleRIFFList(in io.ReadSeeker) (originalTime time.Time, err error) {
 		listType := string(dword)
 
 		if listType == "ncdt" {
-			fmt.Println("found it!")
+			// fmt.Println("found it!")
 			return handleRIFFChunk(in)
 		}
-		fmt.Println(listType, listSize)
+		// fmt.Println(listType, listSize)
 		in.Seek(listSize-4, os.SEEK_CUR)
 	}
 }
