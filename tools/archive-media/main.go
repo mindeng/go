@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -23,52 +24,61 @@ func (err ErrArchiveIgnore) Error() string {
 	return err.info
 }
 
+type ArchiveResultType int
+
+const (
+	Archived ArchiveResultType = iota
+	IgoreExisted
+	IgnoreErrorTime
+)
+
 type ArchiveResult struct {
+	src    string
+	dst    string
+	result ArchiveResultType
+	err    error
+}
+type MediaInfo struct {
 	path    string
 	created time.Time
 	err     error
 }
 
-func archiveFiles(q <-chan string) <-chan ArchiveResult {
-	chanList := make([]<-chan ArchiveResult, 4)
-	done := make(chan bool)
-	for i := 0; i < len(chanList); i++ {
-		c := make(chan ArchiveResult, 100)
-		chanList[i] = c
+func archiveFiles(mediaFiles <-chan MediaInfo, dstDir string, results chan<- ArchiveResult) {
+	for mediaFile := range mediaFiles {
+		src := mediaFile.path
+		// log.Println("got ", src)
+		created := mediaFile.created
 
-		go func(c chan ArchiveResult) {
-
-			for p := range q {
-				// log.Println("got ", p)
-				created, err := minlib.FileOriginalTime(p)
-				c <- ArchiveResult{p, created, err}
-			}
-			// log.Println("close ", c)
-			close(c)
-		}(c)
-	}
-
-	results := make(chan ArchiveResult, 100)
-	for _, ch := range chanList {
-		go func(c <-chan ArchiveResult) {
-			for result := range c {
-				results <- result
-			}
-			done <- true
-		}(ch)
-	}
-
-	go func() {
-		for i := 0; i < len(chanList); i++ {
-			<-done
+		if created.Year() < 1980 {
+			// fmt.Fprintf(os.Stderr, "time error: %v %s\n", created, path)
+			results <- ArchiveResult{src, "", IgnoreErrorTime, nil}
+			continue
 		}
-		close(results)
-	}()
 
-	return results
+		dst := path.Join(dstDir, fmt.Sprintf("%02d/%02d/%02d", created.Year(), created.Month(), created.Day()), path.Base(src))
+		dstDir := path.Dir(dst)
+		if _, err := os.Stat(dstDir); os.IsNotExist(err) {
+			os.MkdirAll(dstDir, 0755)
+		}
+
+		if info, err := os.Stat(dst); err == nil {
+			t, _ := minlib.FileOriginalTime(dst)
+			if t == created {
+				if srcInfo, err := os.Stat(src); err == nil && srcInfo.Size() == info.Size() {
+					results <- ArchiveResult{src, dst, IgoreExisted, nil}
+					continue
+				}
+			}
+		}
+
+		err := minlib.CopyFile(dst, mediaFile.path)
+		results <- ArchiveResult{mediaFile.path, dst, Archived, err}
+	}
+	close(results)
 }
 
-func walkDirectory(dir string, q chan string) {
+func walkDirectory(dir string, out chan MediaInfo) {
 	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "walk error: %v %s\n", err, path)
@@ -86,7 +96,8 @@ func walkDirectory(dir string, q chan string) {
 		case ".jpg", ".png", ".arw", ".nef", ".avi", ".mp4", ".mov", ".m4v":
 			// need to archive
 			// log.Println("put ", path)
-			q <- path
+			created, err := minlib.FileOriginalTime(path)
+			out <- MediaInfo{path, created, err}
 			return nil
 		default:
 			return nil
@@ -94,30 +105,45 @@ func walkDirectory(dir string, q chan string) {
 	})
 
 	// log.Println("q closed")
-	close(q)
+	close(out)
 }
 
-func archiveDirectory(src string) {
-	q := make(chan string, 100)
-	results := archiveFiles(q)
-
-	go walkDirectory(src, q)
+func archive(src string, dst string) {
+	mediaFiles := make(chan MediaInfo, 100)
+	results := make(chan ArchiveResult, 1000)
+	go walkDirectory(src, mediaFiles)
+	go archiveFiles(mediaFiles, dst, results)
 
 	start := time.Now()
 
 	func() {
+		var errorTimeFiles []string
+		var existedFiles []string
 		for result := range results {
 			if result.err != nil {
-				fmt.Fprintf(os.Stderr, "failed %v %s\n", result.err, result.path)
+				fmt.Fprintf(os.Stderr, "archive failed: %v %s\n", result.err, result.src)
 			} else {
-				fmt.Printf("%v %s archived\n", result.created, result.path)
-				created, path := result.created, result.path
-				if created.Year() < 1980 {
-					fmt.Fprintf(os.Stderr, "time error: %v %s\n", created, path)
-				} else {
-					fmt.Printf("archive %v %s\n", created, path)
+				switch result.result {
+				case Archived:
+					fmt.Printf("%s -> %s\n", result.src, result.dst)
+				case IgnoreErrorTime:
+					errorTimeFiles = append(errorTimeFiles, result.src)
+				case IgoreExisted:
+					existedFiles = append(existedFiles, result.src)
 				}
+				// fmt.Printf("%v %s archived\n", result.created, result.path)
+				// path, err := result.path, result.err
 			}
+		}
+
+		fmt.Fprintf(os.Stderr, "%s", "Files with error time: \n")
+		for _, path := range errorTimeFiles {
+			fmt.Fprintf(os.Stderr, "%s\n", path)
+		}
+
+		fmt.Fprintf(os.Stderr, "%s", "Files existed: \n")
+		for _, path := range existedFiles {
+			fmt.Fprintf(os.Stderr, "%s\n", path)
 		}
 	}()
 
@@ -126,5 +152,5 @@ func archiveDirectory(src string) {
 }
 
 func main() {
-	archiveDirectory(os.Args[1])
+	archive(os.Args[1], os.Args[2])
 }
