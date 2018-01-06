@@ -39,7 +39,7 @@ func CopyFile(dst, src string) error {
 	defer in.Close()
 
 	// tmp, err := ioutil.TempFile("", "")
-	tmp, err := ioutil.TempFile(filepath.Dir(dst)+".tmp", "cp_")
+	tmp, err := ioutil.TempFile(filepath.Dir(dst), "_tmp_")
 	if err != nil {
 		return err
 	}
