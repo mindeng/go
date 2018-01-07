@@ -35,6 +35,17 @@ func (err *ErrNoOriginalTime) Error() string {
 
 var zeroTime = time.Time{}
 
+func FileTime(path string) (time.Time, error) {
+	created, err := FileOriginalTime(path)
+
+	if err != nil {
+		if fi, err := os.Stat(path); err == nil {
+			return fi.ModTime(), nil
+		}
+	}
+	return created, err
+}
+
 // FileOriginalTime returns the original time for file p.
 func FileOriginalTime(p string) (time.Time, error) {
 	ext := strings.ToLower(filepath.Ext(p))
