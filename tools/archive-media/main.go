@@ -97,10 +97,12 @@ func archiveFiles(mediaFiles <-chan MediaInfo, dstDir string, results chan<- Arc
 		}
 
 		if info, err := os.Stat(dst); err == nil {
-			t, _ := minlib.FileOriginalTime(dst)
+			t, _ := FileTime(dst)
 			if t == created {
 				if srcInfo, err := os.Stat(src); err == nil && srcInfo.Size() == info.Size() {
-					results <- ArchiveResult{src, dst, IgoreExisted, nil}
+					if minlib.EqualFile(src, dst) {
+						results <- ArchiveResult{src, dst, IgoreExisted, nil}
+					}
 				}
 			}
 			results <- ArchiveResult{src, dst, CopyConflict, errors.New("file conflicted")}
@@ -123,13 +125,30 @@ func archiveFiles(mediaFiles <-chan MediaInfo, dstDir string, results chan<- Arc
 	close(results)
 }
 
+func FileTime(path string) (time.Time, error) {
+	created, err := minlib.FileOriginalTime(path)
+
+	if created.Year() >= 1980 && created.Year() <= 2100 {
+		return created, nil
+	} else {
+		log.Fatalf("Error created time: %s %v\n", path, created)
+	}
+
+	if err != nil {
+		if fi, err := os.Stat(path); err == nil {
+			return fi.ModTime(), nil
+		}
+	}
+	return created, err
+}
+
 func walkDirectory(dir string, out chan MediaInfo) {
 	done := make(chan bool, concurrentNum)
 	tasks := make(chan string, 100)
 
 	extractTime := func() {
 		for path := range tasks {
-			created, err := minlib.FileOriginalTime(path)
+			created, err := FileTime(path)
 			out <- MediaInfo{path, created, err}
 		}
 		done <- true
@@ -183,44 +202,49 @@ func archive(src string, dst string) {
 
 	func() {
 		var errorTimeFiles []string
-		var existedFiles []string
-		var archiveFailed []string
-		copiedNum := 0
+		var conflictedFiles []string
+		var copyFailed []string
+
+		copiedNum, duplicated := 0, 0
 		for result := range results {
 			if result.err != nil {
-				fmt.Fprintf(os.Stderr, "archive failed: %v %s\n", result.err, result.src)
-				archiveFailed = append(archiveFailed, result.src)
-			} else {
-				switch result.result {
-				case Archived:
-					copiedNum += 1
-					fmt.Printf("%s -> %s\n", result.src, result.dst)
-				case IgnoreErrorTime:
-					errorTimeFiles = append(errorTimeFiles, result.src)
-				case IgoreExisted:
-					existedFiles = append(existedFiles, result.src)
-				}
-				// fmt.Printf("%v %s archived\n", result.created, result.path)
-				// path, err := result.path, result.err
+				fmt.Fprintf(os.Stderr, "archive failed: %v\n", result.err)
 			}
+
+			switch result.result {
+			case CopyFailed:
+				copyFailed = append(copyFailed, result.src)
+			case CopyConflict:
+				conflictedFiles = append(conflictedFiles, result.src)
+			case Archived:
+				copiedNum += 1
+				fmt.Printf("%s -> %s\n", result.src, result.dst)
+			case IgnoreErrorTime:
+				errorTimeFiles = append(errorTimeFiles, result.src)
+			case IgoreExisted:
+				duplicated += 1
+
+			}
+			// fmt.Printf("%v %s archived\n", result.created, result.path)
+			// path, err := result.path, result.err
+
 		}
 
-		fmt.Fprintf(os.Stderr, "Files with error time(%d): \n", len(errorTimeFiles))
+		fmt.Printf("============ Result ============\n")
+		fmt.Printf("Files copied: %d\n", copiedNum)
+		fmt.Printf("Files duplicated: (%d): \n", duplicated)
+		fmt.Printf("Files with no time(%d): \n", len(errorTimeFiles))
 		for _, path := range errorTimeFiles {
-			fmt.Fprintf(os.Stderr, "%s\n", path)
+			fmt.Printf("%s\n", path)
 		}
-
-		fmt.Fprintf(os.Stderr, "Files copy failed(%d): \n", len(archiveFailed))
-		for _, path := range archiveFailed {
-			fmt.Fprintf(os.Stderr, "%s\n", path)
+		fmt.Printf("Files copy failed(%d): \n", len(copyFailed))
+		for _, path := range copyFailed {
+			fmt.Fprintf(os.Stdout, "%s\n", path)
 		}
-
-		fmt.Fprintf(os.Stderr, "Files existed(%d): \n", len(existedFiles))
-		for _, path := range existedFiles {
-			fmt.Fprintf(os.Stderr, "%s\n", path)
+		fmt.Fprintf(os.Stdout, "Files conflicted(%d): \n", len(conflictedFiles))
+		for _, path := range conflictedFiles {
+			fmt.Fprintf(os.Stdout, "%s\n", path)
 		}
-
-		fmt.Fprintf(os.Stderr, "Files copied: %d\n", copiedNum)
 
 	}()
 
