@@ -70,7 +70,7 @@ func handleRequest(conn net.Conn) {
 			log.Fatal(err)
 		}
 
-		ok := "no"
+		ok := "miss"
 		if checksum == myChecksum {
 			ok = "ok"
 		}
