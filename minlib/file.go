@@ -2,6 +2,7 @@ package minlib
 
 import (
 	"bytes"
+	"crypto/md5"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -119,4 +120,20 @@ func EqualFile(file1, file2 string) bool {
 			return false
 		}
 	}
+}
+
+func FileChecksum(path string) (string, error) {
+	f, err := os.Open(path)
+	defer f.Close()
+
+	if err != nil {
+		return "", nil
+	}
+
+	data, err := ioutil.ReadAll(f)
+	if err != nil {
+		return "", nil
+	}
+
+	return fmt.Sprintf("%x", md5.Sum(data)), nil
 }
