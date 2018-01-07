@@ -153,6 +153,7 @@ func startCompareFileServiceRemote(tasks <-chan CompareFileTask, cb CompareCallb
 	var wgRet sync.WaitGroup
 	wgRet.Add(1)
 
+	var lock = sync.RWMutex{}
 	pathMap := make(map[string]string)
 
 	var remoteTasks chan VerifyFileChecksumTask
@@ -161,7 +162,10 @@ func startCompareFileServiceRemote(tasks <-chan CompareFileTask, cb CompareCallb
 		if task.checksum == "done" {
 			wgRet.Done()
 		} else {
-			cb(CompareFileTask{pathMap[task.path], time.Time{}, task.path, task.result})
+			lock.RLock()
+			src := pathMap[task.path]
+			lock.RUnlock()
+			cb(CompareFileTask{src, time.Time{}, task.path, task.result})
 		}
 	})
 
@@ -178,21 +182,22 @@ func startCompareFileServiceRemote(tasks <-chan CompareFileTask, cb CompareCallb
 				t, _ := minlib.FileTime(dst)
 				if t == task.srcCreated {
 					if srcInfo, err := os.Stat(src); err == nil && srcInfo.Size() == info.Size() {
-						if *remote {
-							checksum, err := minlib.FileChecksum(src)
-							if err != nil {
-								log.Fatalln("calc checksum error: ", err)
-							}
-
-							remoteDst := dst[len(flag.Args()[1]):]
-							remoteDst = strings.TrimLeft(remoteDst, "/")
-							pathMap[remoteDst] = src
-							remoteTasks <- VerifyFileChecksumTask{remoteDst, checksum, false}
-						} else {
-							task.result = minlib.EqualFile(src, dst)
+						checksum, err := minlib.FileChecksum(src)
+						if err != nil {
+							log.Fatalln("calc checksum error: ", err)
 						}
+
+						remoteDst := dst[len(flag.Args()[1]):]
+						remoteDst = strings.TrimLeft(remoteDst, "/")
+						lock.Lock()
+						pathMap[remoteDst] = src
+						lock.Unlock()
+						remoteTasks <- VerifyFileChecksumTask{remoteDst, checksum, false}
+						continue
 					}
 				}
+				// conflicted
+				cb(task)
 			} else {
 				log.Fatalf("File not exists: %s\n", dst)
 			}
