@@ -295,11 +295,7 @@ func guessTimeFromFilename(p string) (time.Time, error) {
 		return time.Time{}, &ErrNoOriginalTime{}
 	}
 	originalTime := time.Unix(int64(timestamp/1000.0), int64(timestamp%1000*1000*1000))
-	if originalTime.Year() >= 1980 && originalTime.Year() <= 2100 {
-		return originalTime, nil
-	} else {
-		return time.Time{}, &ErrNoOriginalTime{}
-	}
+	return originalTime, nil
 }
 
 // ExtractExifDateTime extract Exif date time from the reader r
