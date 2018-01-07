@@ -83,6 +83,26 @@ func startCopyFileService(tasks <-chan CopyFileTask, results chan<- ArchiveResul
 	return &wg
 }
 
+func startExtractFileTimeService(tasks <-chan string, results chan<- MediaInfo) *sync.WaitGroup {
+	var wg sync.WaitGroup
+	const concurrentNum = 2
+	wg.Add(concurrentNum)
+
+	extractTime := func() {
+		defer wg.Done()
+		for path := range tasks {
+			created, err := FileTime(path)
+			results <- MediaInfo{path, created, err}
+		}
+	}
+
+	for i := 0; i < concurrentNum; i++ {
+		go extractTime()
+	}
+
+	return &wg
+}
+
 func archiveFiles(mediaFiles <-chan MediaInfo, dstDir string, results chan<- ArchiveResult) {
 	tasks := make(chan CopyFileTask, 100)
 	wg := startCopyFileService(tasks, results)
@@ -149,21 +169,9 @@ func FileTime(path string) (time.Time, error) {
 	return created, err
 }
 
-func walkDirectory(dir string, out chan MediaInfo) {
-	done := make(chan bool, concurrentNum)
+func walkDirectory(dir string, results chan MediaInfo) {
 	tasks := make(chan string, 100)
-
-	extractTime := func() {
-		for path := range tasks {
-			created, err := FileTime(path)
-			out <- MediaInfo{path, created, err}
-		}
-		done <- true
-	}
-
-	for i := 0; i < concurrentNum; i++ {
-		go extractTime()
-	}
+	wg := startExtractFileTimeService(tasks, results)
 
 	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -191,12 +199,10 @@ func walkDirectory(dir string, out chan MediaInfo) {
 
 	close(tasks)
 
-	for i := 0; i < concurrentNum; i++ {
-		<-done
-	}
+	wg.Wait()
 
 	// log.Println("q closed")
-	close(out)
+	close(results)
 }
 
 func archive(src string, dst string) {
