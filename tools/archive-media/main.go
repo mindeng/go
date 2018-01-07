@@ -101,11 +101,10 @@ func archiveFiles(mediaFiles <-chan MediaInfo, dstDir string, results chan<- Arc
 			if t == created {
 				if srcInfo, err := os.Stat(src); err == nil && srcInfo.Size() == info.Size() {
 					results <- ArchiveResult{src, dst, IgoreExisted, nil}
-				} else {
-					results <- ArchiveResult{src, dst, CopyConflict, errors.New("file conflicted")}
 				}
-				continue
 			}
+			results <- ArchiveResult{src, dst, CopyConflict, errors.New("file conflicted")}
+			continue
 		}
 
 		// err := minlib.CopyFile(dst, mediaFile.path)
