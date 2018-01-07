@@ -97,7 +97,7 @@ func startExtractFileTimeService(tasks <-chan string, results chan<- MediaInfo) 
 	extractTime := func() {
 		defer wg.Done()
 		for path := range tasks {
-			created, err := FileTime(path)
+			created, err := minlib.FileTime(path)
 			results <- MediaInfo{path, created, err}
 		}
 	}
@@ -125,7 +125,7 @@ func startCompareFileServiceLocally(tasks <-chan CompareFileTask, cb CompareCall
 			task.result = false
 
 			if info, err := os.Stat(dst); err == nil {
-				t, _ := FileTime(dst)
+				t, _ := minlib.FileTime(dst)
 				if t == task.srcCreated {
 					if srcInfo, err := os.Stat(src); err == nil && srcInfo.Size() == info.Size() {
 						task.result = minlib.EqualFile(src, dst)
@@ -145,18 +145,91 @@ func startCompareFileServiceLocally(tasks <-chan CompareFileTask, cb CompareCall
 	return &wg
 }
 
+func startCompareFileServiceRemote(tasks <-chan CompareFileTask, cb CompareCallback) *sync.WaitGroup {
+	var wg sync.WaitGroup
+	const concurrentNum = 2
+	wg.Add(concurrentNum)
+
+	var wgRet sync.WaitGroup
+	wgRet.Add(1)
+
+	pathMap := make(map[string]string)
+
+	var remoteTasks chan VerifyFileChecksumTask
+	remoteTasks = make(chan VerifyFileChecksumTask, 100)
+	startRemoteVerifyService(*host, *port, remoteTasks, func(task VerifyFileChecksumTask) {
+		if task.checksum == "done" {
+			wgRet.Done()
+		} else {
+			cb(CompareFileTask{pathMap[task.path], time.Time{}, task.path, task.result})
+		}
+	})
+
+	compareFile := func() {
+		defer wg.Done()
+
+		for task := range tasks {
+
+			src := task.src
+			dst := task.dst
+			task.result = false
+
+			if info, err := os.Stat(dst); err == nil {
+				t, _ := minlib.FileTime(dst)
+				if t == task.srcCreated {
+					if srcInfo, err := os.Stat(src); err == nil && srcInfo.Size() == info.Size() {
+						if *remote {
+							checksum, err := minlib.FileChecksum(src)
+							if err != nil {
+								log.Fatalln("calc checksum error: ", err)
+							}
+
+							remoteDst := dst[len(flag.Args()[1]):]
+							remoteDst = strings.TrimLeft(remoteDst, "/")
+							pathMap[remoteDst] = src
+							remoteTasks <- VerifyFileChecksumTask{remoteDst, checksum, false}
+						} else {
+							task.result = minlib.EqualFile(src, dst)
+						}
+					}
+				}
+			} else {
+				log.Fatalf("File not exists: %s\n", dst)
+			}
+		}
+	}
+
+	for i := 0; i < concurrentNum; i++ {
+		go compareFile()
+	}
+
+	go func() {
+		wg.Wait()
+		close(remoteTasks)
+	}()
+
+	return &wgRet
+}
+
 func archiveFiles(mediaFiles <-chan MediaInfo, dstDir string, results chan<- ArchiveResult) {
 	copyTasks := make(chan CopyFileTask, 100)
 	compareTasks := make(chan CompareFileTask, 100)
 
 	copyWait := startCopyFileService(copyTasks, results)
-	compareWait := startCompareFileServiceLocally(compareTasks, func(task CompareFileTask) {
+
+	var compareWait *sync.WaitGroup
+	compareCb := func(task CompareFileTask) {
 		if task.result {
 			results <- ArchiveResult{task.src, task.dst, IgoreExisted, nil}
 		} else {
 			results <- ArchiveResult{task.src, task.dst, CopyConflict, errors.New("file conflicted")}
 		}
-	})
+	}
+	if *remote {
+		compareWait = startCompareFileServiceRemote(compareTasks, compareCb)
+	} else {
+		compareWait = startCompareFileServiceLocally(compareTasks, compareCb)
+	}
 
 	for mediaFile := range mediaFiles {
 		src := mediaFile.path
@@ -190,26 +263,11 @@ func archiveFiles(mediaFiles <-chan MediaInfo, dstDir string, results chan<- Arc
 	close(compareTasks)
 
 	copyWait.Wait()
+	fmt.Println("copy tasks done")
 	compareWait.Wait()
+	fmt.Println("compare tasks done")
 
 	close(results)
-}
-
-func FileTime(path string) (time.Time, error) {
-	created, err := minlib.FileOriginalTime(path)
-
-	if created.Year() >= 1980 && created.Year() <= 2100 {
-		return created, nil
-	} else {
-		log.Fatalf("Error created time: %s %v\n", path, created)
-	}
-
-	if err != nil {
-		if fi, err := os.Stat(path); err == nil {
-			return fi.ModTime(), nil
-		}
-	}
-	return created, err
 }
 
 func walkDirectory(dir string, results chan MediaInfo) {
@@ -274,7 +332,7 @@ func archive(src string, dst string) {
 				conflictedFiles = append(conflictedFiles, result.src)
 			case Archived:
 				copiedNum += 1
-				fmt.Printf("%s -> %s\n", result.src, result.dst)
+				fmt.Printf("cp %s %s\n", result.src, result.dst)
 			case IgnoreErrorTime:
 				errorTimeFiles = append(errorTimeFiles, result.src)
 			case IgoreExisted:
@@ -310,6 +368,10 @@ func archive(src string, dst string) {
 
 var concurrentNum = 1
 var moveFlag = false
+
+var host = flag.String("host", "localhost", "host")
+var port = flag.String("port", "3333", "port")
+var remote = flag.Bool("remote", false, "remote compare")
 
 func main() {
 	flag.IntVar(&concurrentNum, "c", 1, "concurrent number")
