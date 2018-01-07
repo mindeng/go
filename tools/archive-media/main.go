@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mindeng/go/minlib"
@@ -48,14 +49,18 @@ type MediaInfo struct {
 	err     error
 }
 
-func archiveFiles(mediaFiles <-chan MediaInfo, dstDir string, results chan<- ArchiveResult) {
-	done := make(chan bool, concurrentNum)
-	tasks := make(chan struct {
-		src string
-		dst string
-	}, 100)
+type CopyFileTask struct {
+	src string
+	dst string
+}
+
+func startCopyFileService(tasks <-chan CopyFileTask, results chan<- ArchiveResult) *sync.WaitGroup {
+	var wg sync.WaitGroup
+	const concurrentNum = 2
+	wg.Add(concurrentNum)
 
 	copy := func() {
+		defer wg.Done()
 		for t := range tasks {
 			var err error
 			if moveFlag {
@@ -69,12 +74,18 @@ func archiveFiles(mediaFiles <-chan MediaInfo, dstDir string, results chan<- Arc
 			}
 			results <- ArchiveResult{t.src, t.dst, result, err}
 		}
-		done <- true
 	}
 
 	for i := 0; i < concurrentNum; i++ {
 		go copy()
 	}
+
+	return &wg
+}
+
+func archiveFiles(mediaFiles <-chan MediaInfo, dstDir string, results chan<- ArchiveResult) {
+	tasks := make(chan CopyFileTask, 100)
+	wg := startCopyFileService(tasks, results)
 
 	for mediaFile := range mediaFiles {
 		src := mediaFile.path
@@ -102,6 +113,7 @@ func archiveFiles(mediaFiles <-chan MediaInfo, dstDir string, results chan<- Arc
 				if srcInfo, err := os.Stat(src); err == nil && srcInfo.Size() == info.Size() {
 					if minlib.EqualFile(src, dst) {
 						results <- ArchiveResult{src, dst, IgoreExisted, nil}
+						continue
 					}
 				}
 			}
@@ -111,16 +123,11 @@ func archiveFiles(mediaFiles <-chan MediaInfo, dstDir string, results chan<- Arc
 
 		// err := minlib.CopyFile(dst, mediaFile.path)
 		// results <- ArchiveResult{mediaFile.path, dst, Archived, err}
-		tasks <- struct {
-			src string
-			dst string
-		}{src, dst}
+		tasks <- CopyFileTask{src, dst}
 	}
 	close(tasks)
 
-	for i := 0; i < concurrentNum; i++ {
-		<-done
-	}
+	wg.Wait()
 
 	close(results)
 }
@@ -208,7 +215,7 @@ func archive(src string, dst string) {
 		copiedNum, duplicated := 0, 0
 		for result := range results {
 			if result.err != nil {
-				fmt.Fprintf(os.Stderr, "archive failed: %v\n", result.err)
+				fmt.Fprintf(os.Stderr, "[error] %v: %s %s\n", result.err, result.src, result.dst)
 			}
 
 			switch result.result {
@@ -230,7 +237,7 @@ func archive(src string, dst string) {
 
 		}
 
-		fmt.Printf("============ Result ============\n")
+		fmt.Printf("============ Summary ============\n")
 		fmt.Printf("Files copied: %d\n", copiedNum)
 		fmt.Printf("Files duplicated: (%d): \n", duplicated)
 		fmt.Printf("Files with no time(%d): \n", len(errorTimeFiles))
