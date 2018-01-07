@@ -70,10 +70,11 @@ func handleResponse() {
 		ok := false
 		if strings.TrimSpace(result[1]) == "ok" {
 			ok = true
-			verifyCallback(VerifyFileChecksumTask{result[0], "", ok})
 		} else if strings.TrimSpace(result[1]) == "done" {
 			// fmt.Println("recv done")
 			verifyCallback(VerifyFileChecksumTask{"done", "done", false})
+			continue
 		}
+		verifyCallback(VerifyFileChecksumTask{result[0], "", ok})
 	}
 }
