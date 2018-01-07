@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -30,6 +31,7 @@ type ArchiveResultType int
 const (
 	Archived ArchiveResultType = iota
 	CopyFailed
+	CopyConflict
 	IgoreExisted
 	IgnoreErrorTime
 )
@@ -99,8 +101,10 @@ func archiveFiles(mediaFiles <-chan MediaInfo, dstDir string, results chan<- Arc
 			if t == created {
 				if srcInfo, err := os.Stat(src); err == nil && srcInfo.Size() == info.Size() {
 					results <- ArchiveResult{src, dst, IgoreExisted, nil}
-					continue
+				} else {
+					results <- ArchiveResult{src, dst, CopyConflict, errors.New("file conflicted")}
 				}
+				continue
 			}
 		}
 
