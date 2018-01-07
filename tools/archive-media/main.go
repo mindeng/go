@@ -53,6 +53,12 @@ type CopyFileTask struct {
 	src string
 	dst string
 }
+type CompareFileTask struct {
+	src        string
+	srcCreated time.Time
+	dst        string
+	result     bool
+}
 
 func startCopyFileService(tasks <-chan CopyFileTask, results chan<- ArchiveResult) *sync.WaitGroup {
 	var wg sync.WaitGroup
@@ -103,9 +109,54 @@ func startExtractFileTimeService(tasks <-chan string, results chan<- MediaInfo) 
 	return &wg
 }
 
+type CompareCallback func(task CompareFileTask)
+
+func startCompareFileServiceLocally(tasks <-chan CompareFileTask, cb CompareCallback) *sync.WaitGroup {
+	var wg sync.WaitGroup
+	const concurrentNum = 2
+	wg.Add(concurrentNum)
+
+	compareFile := func() {
+		defer wg.Done()
+		for task := range tasks {
+
+			src := task.src
+			dst := task.dst
+			task.result = false
+
+			if info, err := os.Stat(dst); err == nil {
+				t, _ := FileTime(dst)
+				if t == task.srcCreated {
+					if srcInfo, err := os.Stat(src); err == nil && srcInfo.Size() == info.Size() {
+						task.result = minlib.EqualFile(src, dst)
+					}
+				}
+			} else {
+				log.Fatalf("File not exists: %s\n", dst)
+			}
+			cb(task)
+		}
+	}
+
+	for i := 0; i < concurrentNum; i++ {
+		go compareFile()
+	}
+
+	return &wg
+}
+
 func archiveFiles(mediaFiles <-chan MediaInfo, dstDir string, results chan<- ArchiveResult) {
-	tasks := make(chan CopyFileTask, 100)
-	wg := startCopyFileService(tasks, results)
+	copyTasks := make(chan CopyFileTask, 100)
+	compareTasks := make(chan CompareFileTask, 100)
+
+	copyWait := startCopyFileService(copyTasks, results)
+	compareWait := startCompareFileServiceLocally(compareTasks, func(task CompareFileTask) {
+		if task.result {
+			results <- ArchiveResult{task.src, task.dst, IgoreExisted, nil}
+		} else {
+			results <- ArchiveResult{task.src, task.dst, CopyConflict, errors.New("file conflicted")}
+		}
+	})
 
 	for mediaFile := range mediaFiles {
 		src := mediaFile.path
@@ -127,27 +178,19 @@ func archiveFiles(mediaFiles <-chan MediaInfo, dstDir string, results chan<- Arc
 			}
 		}
 
-		if info, err := os.Stat(dst); err == nil {
-			t, _ := FileTime(dst)
-			if t == created {
-				if srcInfo, err := os.Stat(src); err == nil && srcInfo.Size() == info.Size() {
-					if minlib.EqualFile(src, dst) {
-						results <- ArchiveResult{src, dst, IgoreExisted, nil}
-						continue
-					}
-				}
-			}
-			results <- ArchiveResult{src, dst, CopyConflict, errors.New("file conflicted")}
-			continue
+		if _, err := os.Stat(dst); err != nil {
+			// dst not exists, copy the file
+			copyTasks <- CopyFileTask{src, dst}
+		} else {
+			// dst exists, compare src & dst
+			compareTasks <- CompareFileTask{src, created, dst, false}
 		}
-
-		// err := minlib.CopyFile(dst, mediaFile.path)
-		// results <- ArchiveResult{mediaFile.path, dst, Archived, err}
-		tasks <- CopyFileTask{src, dst}
 	}
-	close(tasks)
+	close(copyTasks)
+	close(compareTasks)
 
-	wg.Wait()
+	copyWait.Wait()
+	compareWait.Wait()
 
 	close(results)
 }
