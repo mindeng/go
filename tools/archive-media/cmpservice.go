@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"strings"
@@ -55,6 +56,9 @@ func handleResponse() {
 	reader := bufio.NewReader(conn)
 	for {
 		line, err := reader.ReadString(byte('\n'))
+		if err == io.EOF {
+			break
+		}
 		if err != nil {
 			log.Fatal(err)
 		}
