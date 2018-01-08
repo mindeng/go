@@ -145,7 +145,13 @@ func startCompareFileServiceLocally(tasks <-chan CompareFileTask, cb CompareCall
 	return &wg
 }
 
-func startCompareFileServiceRemote(tasks <-chan CompareFileTask, cb CompareCallback) *sync.WaitGroup {
+type CompareFileInfo struct {
+	src         string
+	dst         string
+	srcChecksum string
+}
+
+func startCompareFileServiceRemote(tasks <-chan CompareFileTask, copyTasks chan<- CopyFileTask, cb CompareCallback) *sync.WaitGroup {
 	var wg sync.WaitGroup
 	const concurrentNum = 2
 	wg.Add(concurrentNum)
@@ -154,7 +160,14 @@ func startCompareFileServiceRemote(tasks <-chan CompareFileTask, cb CompareCallb
 	wgRet.Add(1)
 
 	var lock = sync.RWMutex{}
-	pathMap := make(map[string]string)
+	pathMap := make(map[string]CompareFileInfo)
+
+	copyConflictedFile := func(src string, dst string, srcChecksum string) {
+		// conflicted, copy it with another name
+		ext := filepath.Ext(dst)
+		dst = fmt.Sprintf("%s-%s%s", dst[:len(dst)-len(ext)], srcChecksum[:6], ext)
+		copyTasks <- CopyFileTask{src, dst}
+	}
 
 	var remoteTasks chan VerifyFileChecksumTask
 	remoteTasks = make(chan VerifyFileChecksumTask, 100)
@@ -163,9 +176,15 @@ func startCompareFileServiceRemote(tasks <-chan CompareFileTask, cb CompareCallb
 			wgRet.Done()
 		} else {
 			lock.RLock()
-			src := pathMap[task.path]
+			srcDst := pathMap[task.path]
 			lock.RUnlock()
-			cb(CompareFileTask{src, time.Time{}, task.path, task.result})
+
+			if task.result {
+				cb(CompareFileTask{srcDst.src, time.Time{}, srcDst.dst, task.result})
+			} else {
+				// conflicted, copy it with another name
+				copyConflictedFile(srcDst.src, srcDst.dst, srcDst.srcChecksum)
+			}
 		}
 	})
 
@@ -179,25 +198,29 @@ func startCompareFileServiceRemote(tasks <-chan CompareFileTask, cb CompareCallb
 			task.result = false
 
 			if info, err := os.Stat(dst); err == nil {
+				// dst exists
+
+				checksum, err := minlib.FileChecksum(src)
+				if err != nil {
+					log.Fatalln("calc checksum error: ", err)
+				}
+
 				t, _ := minlib.FileTime(dst)
 				if t == task.srcCreated {
 					if srcInfo, err := os.Stat(src); err == nil && srcInfo.Size() == info.Size() {
-						checksum, err := minlib.FileChecksum(src)
-						if err != nil {
-							log.Fatalln("calc checksum error: ", err)
-						}
 
 						remoteDst := dst[len(flag.Args()[1]):]
 						remoteDst = strings.TrimLeft(remoteDst, "/")
 						lock.Lock()
-						pathMap[remoteDst] = src
+						pathMap[remoteDst] = CompareFileInfo{src, dst, checksum}
 						lock.Unlock()
 						remoteTasks <- VerifyFileChecksumTask{remoteDst, checksum, false}
 						continue
 					}
 				}
-				// conflicted
-				cb(task)
+
+				// conflicted, copy it with another name
+				copyConflictedFile(src, dst, checksum)
 			} else {
 				log.Fatalf("File not exists: %s\n", dst)
 			}
@@ -231,7 +254,7 @@ func archiveFiles(mediaFiles <-chan MediaInfo, dstDir string, results chan<- Arc
 		}
 	}
 	if *remote {
-		compareWait = startCompareFileServiceRemote(compareTasks, compareCb)
+		compareWait = startCompareFileServiceRemote(compareTasks, copyTasks, compareCb)
 	} else {
 		compareWait = startCompareFileServiceLocally(compareTasks, compareCb)
 	}
@@ -264,13 +287,15 @@ func archiveFiles(mediaFiles <-chan MediaInfo, dstDir string, results chan<- Arc
 			compareTasks <- CompareFileTask{src, created, dst, false}
 		}
 	}
-	close(copyTasks)
-	close(compareTasks)
 
-	copyWait.Wait()
-	fmt.Println("copy tasks done")
+	// should close & wait compare tasks first, because compare task may add new copy task
+	close(compareTasks)
 	compareWait.Wait()
 	fmt.Println("compare tasks done")
+
+	close(copyTasks)
+	copyWait.Wait()
+	fmt.Println("copy tasks done")
 
 	close(results)
 }
