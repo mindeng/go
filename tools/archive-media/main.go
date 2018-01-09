@@ -18,20 +18,12 @@ type ArchiveCallback func(path string, err error) error
 
 type ArchiveFunc func(path string, created time.Time, info os.FileInfo) error
 
-type ErrArchiveIgnore struct {
-	info string
-}
-
-func (err ErrArchiveIgnore) Error() string {
-	return err.info
-}
-
 type ArchiveResultType int
 
 const (
 	Archived ArchiveResultType = iota
 	CopyFailed
-	IgoreExisted
+	IgnoreExisted
 )
 
 type ArchiveResult struct {
@@ -59,22 +51,38 @@ type CompareFileTask struct {
 
 func startCopyFileService(tasks <-chan CopyFileTask, results chan<- ArchiveResult) *sync.WaitGroup {
 	var wg sync.WaitGroup
-	const concurrentNum = 2
+	const concurrentNum = 1
 	wg.Add(concurrentNum)
 
 	copy := func() {
 		defer wg.Done()
 		for t := range tasks {
+			result := CopyFailed
 			var err error
+			if dstInfo, err := os.Stat(t.dst); err == nil {
+				if srcInfo, err := os.Stat(t.src); err == nil && srcInfo.Size() == dstInfo.Size() {
+					if minlib.EqualFile(t.src, t.dst) {
+						result = IgnoreExisted
+						goto RESULT
+					}
+				}
+				checksum, err := minlib.FileChecksum(t.src)
+				if err != nil {
+					goto RESULT
+				}
+				t.dst = uniqueFilename(t.dst, checksum)
+			}
 			if moveFlag {
 				err = os.Rename(t.src, t.dst)
 			} else {
 				err = minlib.CopyFile(t.dst, t.src)
 			}
-			result := Archived
-			if err != nil {
-				result = CopyFailed
+
+			if err == nil {
+				result = Archived
 			}
+
+		RESULT:
 			results <- ArchiveResult{t.src, t.dst, result, err}
 		}
 	}
@@ -148,6 +156,11 @@ type CompareFileInfo struct {
 	srcChecksum string
 }
 
+func uniqueFilename(filename string, checksum string) string {
+	ext := filepath.Ext(filename)
+	return fmt.Sprintf("%s-%s%s", filename[:len(filename)-len(ext)], checksum[:6], ext)
+}
+
 func startCompareFileServiceRemote(tasks <-chan CompareFileTask, copyTasks chan<- CopyFileTask, cb CompareCallback) *sync.WaitGroup {
 	var wg sync.WaitGroup
 	const concurrentNum = 2
@@ -161,8 +174,7 @@ func startCompareFileServiceRemote(tasks <-chan CompareFileTask, copyTasks chan<
 
 	copyConflictedFile := func(src string, dst string, srcChecksum string) {
 		// conflicted, copy it with another name
-		ext := filepath.Ext(dst)
-		dst = fmt.Sprintf("%s-%s%s", dst[:len(dst)-len(ext)], srcChecksum[:6], ext)
+		dst = uniqueFilename(dst, srcChecksum)
 		copyTasks <- CopyFileTask{src, dst}
 	}
 
@@ -245,7 +257,7 @@ func archiveFiles(mediaFiles <-chan MediaInfo, dstDir string, results chan<- Arc
 	var compareWait *sync.WaitGroup
 	compareCb := func(task CompareFileTask) {
 		if task.result {
-			results <- ArchiveResult{task.src, task.dst, IgoreExisted, nil}
+			results <- ArchiveResult{task.src, task.dst, IgnoreExisted, nil}
 		} else {
 			// results <- ArchiveResult{task.src, task.dst, CopyConflict, errors.New("file conflicted")}
 			log.Fatalf("File conflicted: %s %s\n", task.src, task.dst)
@@ -354,7 +366,7 @@ func archive(src string, dst string) {
 			case Archived:
 				copiedNum += 1
 				fmt.Printf("cp %s %s\n", result.src, result.dst)
-			case IgoreExisted:
+			case IgnoreExisted:
 				duplicated += 1
 
 			}
