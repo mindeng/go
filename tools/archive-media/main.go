@@ -14,31 +14,22 @@ import (
 	"github.com/mindeng/go/minlib"
 )
 
-type ArchiveCallback func(path string, err error) error
-
-type ArchiveFunc func(path string, created time.Time, info os.FileInfo) error
-
-type ArchiveResultType int
+type archiveResultType int
 
 const (
-	Archived ArchiveResultType = iota
-	CopyFailed
-	IgnoreExisted
+	archiveResultDone archiveResultType = iota
+	archiveResultCopyFailed
+	archiveResultIgnoreExisted
 )
 
-type ArchiveResult struct {
+type archiveResult struct {
 	src    string
 	dst    string
-	result ArchiveResultType
+	result archiveResultType
 	err    error
 }
-type MediaInfo struct {
-	path    string
-	created time.Time
-	err     error
-}
 
-type CopyFileTask struct {
+type copyFileTask struct {
 	src string
 	dst string
 }
@@ -49,7 +40,7 @@ type CompareFileTask struct {
 	result     bool
 }
 
-func startCopyFileService(tasks <-chan CopyFileTask, results chan<- ArchiveResult) *sync.WaitGroup {
+func startCopyFileService(tasks <-chan copyFileTask, results chan<- ArchiveResult) *sync.WaitGroup {
 	var wg sync.WaitGroup
 	const concurrentNum = 1
 	wg.Add(concurrentNum)
@@ -161,7 +152,7 @@ func uniqueFilename(filename string, checksum string) string {
 	return fmt.Sprintf("%s-%s%s", filename[:len(filename)-len(ext)], checksum[:6], ext)
 }
 
-func startCompareFileServiceRemote(tasks <-chan CompareFileTask, copyTasks chan<- CopyFileTask, cb CompareCallback) *sync.WaitGroup {
+func startCompareFileServiceRemote(tasks <-chan CompareFileTask, copyTasks chan<- copyFileTask, cb CompareCallback) *sync.WaitGroup {
 	var wg sync.WaitGroup
 	const concurrentNum = 2
 	wg.Add(concurrentNum)
@@ -175,7 +166,7 @@ func startCompareFileServiceRemote(tasks <-chan CompareFileTask, copyTasks chan<
 	copyConflictedFile := func(src string, dst string, srcChecksum string) {
 		// conflicted, copy it with another name
 		dst = uniqueFilename(dst, srcChecksum)
-		copyTasks <- CopyFileTask{src, dst}
+		copyTasks <- copyFileTask{src, dst}
 	}
 
 	var remoteTasks chan VerifyFileChecksumTask
@@ -249,7 +240,7 @@ func startCompareFileServiceRemote(tasks <-chan CompareFileTask, copyTasks chan<
 }
 
 func archiveFiles(mediaFiles <-chan MediaInfo, dstDir string, results chan<- ArchiveResult) {
-	copyTasks := make(chan CopyFileTask, 100)
+	copyTasks := make(chan copyFileTask, 100)
 	compareTasks := make(chan CompareFileTask, 100)
 
 	copyWait := startCopyFileService(copyTasks, results)
@@ -285,7 +276,7 @@ func archiveFiles(mediaFiles <-chan MediaInfo, dstDir string, results chan<- Arc
 
 		if _, err := os.Stat(dst); err != nil {
 			// dst not exists, copy the file
-			copyTasks <- CopyFileTask{src, dst}
+			copyTasks <- copyFileTask{src, dst}
 		} else {
 			// dst exists, compare src & dst
 			compareTasks <- CompareFileTask{src, created, dst, false}
