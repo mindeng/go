@@ -125,16 +125,15 @@ func EqualFile(file1, file2 string) bool {
 
 func FileChecksum(path string) (string, error) {
 	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
 	defer f.Close()
 
-	if err != nil {
-		return "", nil
+	h := md5.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
 	}
 
-	data, err := ioutil.ReadAll(f)
-	if err != nil {
-		return "", nil
-	}
-
-	return fmt.Sprintf("%x", md5.Sum(data)), nil
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
