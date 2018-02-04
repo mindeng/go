@@ -30,10 +30,11 @@ func CopyFile(dst, src string) error {
 		return err
 	}
 
-	// if _, err := os.Stat(dst); err == nil {
-	// 	// dst is existed
-	// 	return ErrFileExists{path: dst}
-	// }
+	f, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL, 0644)
+	if err != nil {
+		return ErrFileExists{path: dst}
+	}
+	f.Close()
 
 	in, err := os.Open(src)
 	if err != nil {
