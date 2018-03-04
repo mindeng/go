@@ -2,13 +2,14 @@ package main
 
 import (
 	"fmt"
-	"github.com/mindeng/go/minlib"
 	"os"
+
+	"github.com/mindeng/goutils"
 )
 
 func main() {
 	path := os.Args[1]
-	ctime, err := minlib.FileOriginalTime(path)
+	ctime, err := goutils.FileOriginalTime(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %s\n", err, path)
 		os.Exit(1)
