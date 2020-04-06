@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/md5"
 	"encoding/binary"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -22,7 +23,7 @@ type Task struct {
 	md5      []byte
 }
 
-func doJob(jobs <-chan Task, results chan<- Task) {
+func calcMd5(jobs <-chan Task, results chan<- Task) {
 	for job := range jobs {
 		h := md5.New()
 
@@ -177,18 +178,30 @@ func main() {
 	// var wg sync.WaitGroup
 	// wg.Add(1)
 
-	var dir = path.Dir(os.Args[1])
-	var dbPath = path.Join(dir, "mm.db")
+	outdbPath := flag.String("outdb", "", "output db path")
+	indbPath := flag.String("indb", "", "input db path")
+	flag.Parse()
 
-	if len(os.Args) > 2 {
-		dbPath = os.Args[2]
+	if *outdbPath == "" {
+		var dir = path.Dir(flag.Args()[0])
+		*outdbPath = path.Join(dir, "mm.db")
 	}
 
-	db, err := bolt.Open(dbPath, 0600, nil)
+	db, err := bolt.Open(*outdbPath, 0600, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer db.Close()
+
+	var indb *bolt.DB
+
+	if *indbPath != "" {
+		indb, err = bolt.Open(*indbPath, 0600, nil)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer indb.Close()
+	}
 
 	if err := db.Update(func(tx *bolt.Tx) error {
 		tx.CreateBucketIfNotExists([]byte("mm"))
@@ -208,7 +221,7 @@ func main() {
 	jobs := make(chan Task, 10)
 	results := make(chan Task, 100)
 
-	go doJob(jobs, results)
+	go calcMd5(jobs, results)
 
 	go func() {
 		for path := range pathList {
