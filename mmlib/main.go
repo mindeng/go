@@ -23,19 +23,56 @@ type Task struct {
 	md5      []byte
 }
 
-func calcMd5(jobs <-chan Task, results chan<- Task) {
-	for job := range jobs {
-		h := md5.New()
+func makeMd5Key(path string) []byte {
+	return []byte(fmt.Sprintf("%s:md5", path))
+}
 
-		h.Write(job.data)
-		var md5 = h.Sum(nil)
-		job.md5 = md5
+var makeSizeKey = func(path string) []byte {
+	return []byte(fmt.Sprintf("%s:size", path))
+}
+
+func calcMd5(jobs <-chan Task, results chan<- Task, db *bolt.DB) {
+	for job := range jobs {
+		var sum []byte
+
+		if db != nil {
+			db.View(func(tx *bolt.Tx) error {
+				b := tx.Bucket([]byte("mm"))
+				sum = b.Get(makeMd5Key(job.path))
+				return nil
+			})
+		}
+
+		if sum == nil {
+			h := md5.New()
+
+			h.Write(job.data)
+			sum = h.Sum(nil)
+			// fmt.Fprintf(os.Stdout, "md5: %s %x\n", job.path, sum)
+		}
+		job.md5 = sum
 
 		results <- job
 	}
 
 	fmt.Fprintf(os.Stderr, "calc done\n")
 	close(results)
+}
+
+func getFileSize(path string) (int64, error) {
+	file, err := os.Open(path)
+
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+
+	var stats os.FileInfo
+	if stats, err = file.Stat(); err != nil {
+		return 0, err
+	}
+
+	return stats.Size(), nil
 }
 
 func readFile(filename string, maxsize int) ([]byte, int, error) {
@@ -83,6 +120,7 @@ func walkDirectory(dir string, tasks chan string, db *bolt.DB) (int, map[string]
 		}
 
 		ext := strings.ToLower(filepath.Ext(info.Name()))
+		// fmt.Printf("ext: %s\n", ext)
 		switch ext {
 		case ".jpg", ".jpeg", ".png", ".arw", ".nef", ".avi", ".mp4", ".mov", ".m4v", ".m4a", ".gif":
 			// need to archive
@@ -92,8 +130,19 @@ func walkDirectory(dir string, tasks chan string, db *bolt.DB) (int, map[string]
 
 			if err := db.View(func(tx *bolt.Tx) error {
 				b := tx.Bucket([]byte("mm"))
-				if v := b.Get([]byte(fmt.Sprintf("%s:md5", path))); v != nil {
-					exists = true
+				if v := b.Get(makeMd5Key(path)); v != nil {
+					if size, err := getFileSize(path); err == nil {
+						if storedSize := b.Get(makeSizeKey(path)); storedSize != nil {
+							var storedFileSize = binary.BigEndian.Uint32(storedSize)
+							// fmt.Printf("size: %d storedSize: %d\n", size, storedFileSize)
+							if size == int64(storedFileSize) {
+								exists = true
+							} else {
+								fmt.Fprintf(os.Stdout, "updated: %s\n", path)
+							}
+						}
+					}
+					// fmt.Printf("md5: %x\n", v)
 				}
 				return nil
 			}); err != nil {
@@ -102,7 +151,7 @@ func walkDirectory(dir string, tasks chan string, db *bolt.DB) (int, map[string]
 
 			if exists {
 				// ignore existed path
-				// fmt.Fprintf(os.Stdout, "exists: %s\n", path)
+				fmt.Fprintf(os.Stdout, "exists: %s\n", path)
 			} else {
 				tasks <- path
 				processed++
@@ -127,10 +176,6 @@ func save(db *bolt.DB, results chan Task) error {
 	var ok bool = true
 	var num = 0
 
-	makeSizeKey := func(path string) []byte {
-		return []byte(fmt.Sprintf("%s:size", path))
-	}
-
 	for ok {
 		if err := db.Update(func(tx *bolt.Tx) error {
 			b, _ := tx.CreateBucketIfNotExists([]byte("mm"))
@@ -151,10 +196,10 @@ func save(db *bolt.DB, results chan Task) error {
 						}
 					}
 				} else {
+					fmt.Fprintf(os.Stdout, "add: %s %x %d\n", result.path, result.md5, result.filesize)
 					b.Put(result.md5, []byte(result.path))
 				}
 
-				fmt.Fprintf(os.Stdout, "md5 of %s: %x %d\n", result.path, result.md5, result.filesize)
 				num++
 				b.Put([]byte(fmt.Sprintf("%s:md5", result.path)), result.md5)
 				bs := make([]byte, 4)
@@ -174,24 +219,35 @@ func save(db *bolt.DB, results chan Task) error {
 	return nil
 }
 
+var outdbPath = flag.String("outdb", "", "output db path")
+var indbPath = flag.String("indb", "", "input db path")
+
+func init() {
+	// init short version for long flag
+	flag.StringVar(outdbPath, "o", "", "output db path")
+	flag.StringVar(indbPath, "i", "", "input db path")
+}
+
 func main() {
 	// var wg sync.WaitGroup
 	// wg.Add(1)
 
-	outdbPath := flag.String("outdb", "", "output db path")
-	indbPath := flag.String("indb", "", "input db path")
 	flag.Parse()
+	var dstDir = flag.Args()[0]
+
+	// fmt.Printf("outdbPath: %s\n", *outdbPath)
 
 	if *outdbPath == "" {
-		var dir = path.Dir(flag.Args()[0])
-		*outdbPath = path.Join(dir, "mm.db")
+		*outdbPath = path.Join(dstDir, "mm.db")
 	}
 
-	db, err := bolt.Open(*outdbPath, 0600, nil)
+	fmt.Printf("outdb: %s\n", *outdbPath)
+
+	outdb, err := bolt.Open(*outdbPath, 0600, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer db.Close()
+	defer outdb.Close()
 
 	var indb *bolt.DB
 
@@ -203,7 +259,7 @@ func main() {
 		defer indb.Close()
 	}
 
-	if err := db.Update(func(tx *bolt.Tx) error {
+	if err := outdb.Update(func(tx *bolt.Tx) error {
 		tx.CreateBucketIfNotExists([]byte("mm"))
 		return nil
 	}); err != nil {
@@ -215,13 +271,15 @@ func main() {
 	var ignoredExts map[string]int
 
 	go func(db *bolt.DB) {
-		processed, ignoredExts = walkDirectory(os.Args[1], pathList, db)
-	}(db)
+		processed, ignoredExts = walkDirectory(dstDir, pathList, db)
+	}(outdb)
 
 	jobs := make(chan Task, 10)
 	results := make(chan Task, 100)
 
-	go calcMd5(jobs, results)
+	go func(db *bolt.DB) {
+		calcMd5(jobs, results, db)
+	}(indb)
 
 	go func() {
 		for path := range pathList {
@@ -246,7 +304,7 @@ func main() {
 
 	// wg.Wait()
 
-	if err := save(db, results); err != nil {
+	if err := save(outdb, results); err != nil {
 		log.Fatal(err)
 	}
 
