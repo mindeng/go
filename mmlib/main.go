@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -176,7 +177,14 @@ func main() {
 	// var wg sync.WaitGroup
 	// wg.Add(1)
 
-	db, err := bolt.Open("my.db", 0600, nil)
+	var dir = path.Dir(os.Args[1])
+	var dbPath = path.Join(dir, "mm.db")
+
+	if len(os.Args) > 2 {
+		dbPath = os.Args[2]
+	}
+
+	db, err := bolt.Open(dbPath, 0600, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
