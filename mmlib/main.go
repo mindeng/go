@@ -63,9 +63,9 @@ func readFile(filename string, maxsize int) ([]byte, int, error) {
 	return data, int(size), err
 }
 
-func walkDirectory(dir string, tasks chan string) (int, int) {
-	var total = 0
-	var ignored = 0
+func walkDirectory(dir string, tasks chan string, db *bolt.DB) (int, map[string]int) {
+	var processed = 0
+	var ignoredExts = make(map[string]int)
 	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "walk error: %v %s\n", err, path)
@@ -79,16 +79,36 @@ func walkDirectory(dir string, tasks chan string) (int, int) {
 		if info.Name()[0] == '.' && info.Size() == 4096 {
 			return nil
 		}
-		switch strings.ToLower(filepath.Ext(info.Name())) {
-		case ".jpg", ".jpeg", ".png", ".arw", ".nef", ".avi", ".mp4", ".mov", ".m4v", ".m4a":
+
+		ext := strings.ToLower(filepath.Ext(info.Name()))
+		switch ext {
+		case ".jpg", ".jpeg", ".png", ".arw", ".nef", ".avi", ".mp4", ".mov", ".m4v", ".m4a", ".gif":
 			// need to archive
 			// log.Println("put ", path)
-			tasks <- path
-			total++
+
+			var exists = false
+
+			if err := db.View(func(tx *bolt.Tx) error {
+				b := tx.Bucket([]byte("mm"))
+				if v := b.Get([]byte(fmt.Sprintf("%s:md5", path))); v != nil {
+					exists = true
+				}
+				return nil
+			}); err != nil {
+				log.Fatal(err)
+			}
+
+			if exists {
+				// ignore existed path
+				// fmt.Fprintf(os.Stdout, "exists: %s\n", path)
+			} else {
+				tasks <- path
+				processed++
+			}
 			return nil
 		default:
-			fmt.Fprintf(os.Stderr, "ignore: %s\n", path)
-			ignored++
+			// fmt.Fprintf(os.Stderr, "ignore: %s\n", path)
+			ignoredExts[ext] = 1
 			return nil
 		}
 	})
@@ -96,19 +116,18 @@ func walkDirectory(dir string, tasks chan string) (int, int) {
 	close(tasks)
 
 	// fmt.Fprintf(os.Stderr, "process: %d ignored: %d\n", total, ignored)
-	return total, ignored
+	return processed, ignoredExts
 }
 
-func save(results chan Task) error {
-	db, err := bolt.Open("my.db", 0600, nil)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer db.Close()
+func save(db *bolt.DB, results chan Task) error {
 
 	var result Task
 	var ok bool = true
 	var num = 0
+
+	makeSizeKey := func(path string) []byte {
+		return []byte(fmt.Sprintf("%s:size", path))
+	}
 
 	for ok {
 		if err := db.Update(func(tx *bolt.Tx) error {
@@ -120,18 +139,25 @@ func save(results chan Task) error {
 					break
 				}
 
+				if v := b.Get(result.md5); v != nil {
+					if size := b.Get(makeSizeKey(string(v))); size != nil {
+						var filesize = binary.BigEndian.Uint32(size)
+						if filesize == uint32(result.filesize) {
+							fmt.Fprintf(os.Stderr, "duplicated: %s %s\n", result.path, v)
+						} else {
+							fmt.Fprintf(os.Stderr, "conflict: %s %s %x\n", result.path, v, result.md5)
+						}
+					}
+				} else {
+					b.Put(result.md5, []byte(result.path))
+				}
+
 				fmt.Fprintf(os.Stdout, "md5 of %s: %x %d\n", result.path, result.md5, result.filesize)
 				num++
 				b.Put([]byte(fmt.Sprintf("%s:md5", result.path)), result.md5)
 				bs := make([]byte, 4)
-				binary.LittleEndian.PutUint32(bs, uint32(result.filesize))
-				b.Put([]byte(fmt.Sprintf("%d:size", result.filesize)), bs)
-
-				if v := b.Get(result.md5); v != nil {
-					fmt.Fprintf(os.Stderr, "duplicated md5: %s %s %x\n", result.path, v, result.md5)
-				} else {
-					b.Put(result.md5, []byte(result.path))
-				}
+				binary.BigEndian.PutUint32(bs, uint32(result.filesize))
+				b.Put(makeSizeKey(result.path), bs)
 
 				if num >= 100 {
 					break
@@ -147,12 +173,29 @@ func save(results chan Task) error {
 }
 
 func main() {
-	var pathList = make(chan string)
-	var processed, ignored int
+	// var wg sync.WaitGroup
+	// wg.Add(1)
 
-	go func() {
-		processed, ignored = walkDirectory(os.Args[1], pathList)
-	}()
+	db, err := bolt.Open("my.db", 0600, nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	if err := db.Update(func(tx *bolt.Tx) error {
+		tx.CreateBucketIfNotExists([]byte("mm"))
+		return nil
+	}); err != nil {
+		log.Fatal(err)
+	}
+
+	var pathList = make(chan string)
+	var processed int
+	var ignoredExts map[string]int
+
+	go func(db *bolt.DB) {
+		processed, ignoredExts = walkDirectory(os.Args[1], pathList, db)
+	}(db)
 
 	jobs := make(chan Task, 10)
 	results := make(chan Task, 100)
@@ -180,7 +223,11 @@ func main() {
 	// }
 	// }()
 
-	save(results)
+	// wg.Wait()
 
-	fmt.Fprintf(os.Stderr, "processed: %d ignored: %d\n", processed, ignored)
+	if err := save(db, results); err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Fprintf(os.Stderr, "processed: %d ignored: %v\n", processed, ignoredExts)
 }
