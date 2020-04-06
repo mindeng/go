@@ -48,14 +48,14 @@ func calcMd5(jobs <-chan Task, results chan<- Task, db *bolt.DB) {
 
 			h.Write(job.data)
 			sum = h.Sum(nil)
-			// fmt.Fprintf(os.Stdout, "md5: %s %x\n", job.path, sum)
+			fmt.Fprintf(os.Stdout, "md5: %s %x\n", job.path, sum)
 		}
 		job.md5 = sum
 
 		results <- job
 	}
 
-	fmt.Fprintf(os.Stderr, "calc done\n")
+	fmt.Fprintf(os.Stdout, "calc done\n")
 	close(results)
 }
 
@@ -107,7 +107,7 @@ func walkDirectory(dir string, tasks chan string, db *bolt.DB) (int, map[string]
 	var ignoredExts = make(map[string]int)
 	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "walk error: %v %s\n", err, path)
+			fmt.Fprintf(os.Stderr, "error: %v %s\n", err, path)
 			return nil
 		}
 		// Ignore directory
@@ -285,14 +285,14 @@ func main() {
 		for path := range pathList {
 			data, size, err := readFile(path, 1<<20)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "read file error: %s %v\n", path, err)
+				fmt.Fprintf(os.Stderr, "error: %s %v\n", path, err)
 				continue
 			}
 
 			jobs <- Task{path: path, filesize: size, data: data}
 		}
 
-		fmt.Fprintf(os.Stderr, "read done\n")
+		fmt.Fprintf(os.Stdout, "read done\n")
 		close(jobs)
 	}()
 
@@ -308,5 +308,5 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Fprintf(os.Stderr, "processed: %d ignored: %v\n", processed, ignoredExts)
+	fmt.Fprintf(os.Stdout, "processed: %d ignored: %v\n", processed, ignoredExts)
 }
