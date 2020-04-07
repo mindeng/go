@@ -190,9 +190,9 @@ func save(db *bolt.DB, results chan Task) error {
 					if size := b.Get(makeSizeKey(string(v))); size != nil {
 						var filesize = binary.BigEndian.Uint32(size)
 						if filesize == uint32(result.filesize) {
-							fmt.Fprintf(os.Stderr, "duplicated: %s %s\n", result.path, v)
+							fmt.Fprintf(os.Stderr, "duplicated: %s | %s\n", result.path, v)
 						} else {
-							fmt.Fprintf(os.Stderr, "conflict: %s %s %x\n", result.path, v, result.md5)
+							fmt.Fprintf(os.Stderr, "conflict: %s | %s | %x\n", result.path, v, result.md5)
 						}
 					}
 				} else {
