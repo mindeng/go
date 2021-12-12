@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-var checkFlag StringArg
+var checkFlag StringFlag
 
 func init() {
 	flag.Var(&checkFlag, "check", "check flag")
