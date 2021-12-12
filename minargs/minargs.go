@@ -1,20 +1,20 @@
 package minargs
 
-type StringArg struct {
+type StringFlag struct {
 	set   bool
 	value string
 }
 
-func (sf *StringArg) Set(x string) error {
+func (sf *StringFlag) Set(x string) error {
 	sf.value = x
 	sf.set = true
 	return nil
 }
 
-func (sf *StringArg) String() string {
+func (sf *StringFlag) String() string {
 	return sf.value
 }
 
-func (sf *StringArg) Provided() bool {
+func (sf *StringFlag) Provided() bool {
 	return sf.set
 }
