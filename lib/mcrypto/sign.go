@@ -9,13 +9,18 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 )
 
 const (
-	headerSigKey = "X-Signature"
+	headerSigKey      = "X-Sig"
+	headerSignTimeKey = "X-Sign-Time"
 )
 
 // Signer 签名器
+// 用于对 http.Request 进行签名和验证
+// 签名时，会增加 X-Sig 和 X-Sign-Time 两个 Header
+// 验证时，会从 X-Sig 中获取签名，并与计算出的签名进行比较，同时会验证 X-Sign-Time 是否在 1 分钟内
 type Signer interface {
 	SignRequest(r *http.Request) error
 	VerifyRequest(r *http.Request) error
@@ -58,12 +63,30 @@ func verifyRequest(r *http.Request, hmacKey string, headerKeys ...string) error 
 		return fmt.Errorf("signature mismatch: %s != %s", sig, expectedSig)
 	}
 
+	// 3. 验证时间戳
+	t := r.Header.Get(headerSignTimeKey)
+	if t == "" {
+		return errors.New("no timestamp")
+	}
+	tm, err := time.Parse(time.RFC3339, t)
+	if err != nil {
+		return err
+	}
+	if time.Since(tm) > 1*time.Minute {
+		return errors.New("timestamp expired")
+	}
+
 	return nil
 }
 
 // signRequest 签名 http.Request
 func signRequest(r *http.Request, hmacKey string, headerKeys ...string) error {
-	// 1. 计算签名
+	// 为 Header 增加一个时间戳
+	// 获取当前的时间信息，采用 ISO8601 格式
+	t := time.Now().UTC().Format(time.RFC3339)
+	r.Header.Add(headerSignTimeKey, t)
+
+	// 计算签名
 	sig, err := calcSignature(hmacKey, r, headerKeys...)
 	if err != nil {
 		return err
@@ -82,9 +105,9 @@ func calcSignature(key string, r *http.Request, headerKeysToSign ...string) (str
 	mac := hmac.New(sha256.New, []byte(key))
 
 	// 增加 URL 的签名
-	// mac.Write([]byte(r.URL.String()))
+	mac.Write([]byte(r.URL.String()))
 	// 增加 Method 的签名
-	// mac.Write([]byte(r.Method))
+	mac.Write([]byte(r.Method))
 	// 增加 Header 的签名
 	for k, v := range r.Header {
 		// 排除掉 X-Signature
