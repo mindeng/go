@@ -9,3 +9,7 @@
    - 通过自定义 `http.Transport` 实现
    - 类似 `curl --resolve www.google.com:443:<ip> https://www.google.com`
 3. 捕获 HTTP 请求的底层连接信息：通过 `httptrace.ClientTrace` 实现
+
+## fastestip.go
+
+找到访问某个域名最快的 IP 地址，具体可参考 `FastestAddress()` 函数，以及 `fastestip_test.go` 测试用例。
